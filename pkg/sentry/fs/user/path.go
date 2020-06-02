@@ -24,6 +24,7 @@ import (
 	"gvisor.dev/gvisor/pkg/fspath"
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/sentry/fs"
+	"gvisor.dev/gvisor/pkg/sentry/kernel"
 	"gvisor.dev/gvisor/pkg/sentry/kernel/auth"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 	"gvisor.dev/gvisor/pkg/syserror"
@@ -31,28 +32,55 @@ import (
 
 // ResolveExecutablePath resolves the given executable name given the working
 // dir and environment.
-func ResolveExecutablePath(ctx context.Context, creds *auth.Credentials, mns *fs.MountNamespace, envv []string, wd, name string) (string, error) {
+func ResolveExecutablePath(ctx context.Context, args *kernel.CreateProcessArgs) error {
+	name := args.Filename
+	if len(name) == 0 {
+		if len(args.Argv) == 0 {
+			return fmt.Errorf("no filename or command provided")
+		}
+		name = args.Argv[0]
+	}
+
 	// Absolute paths can be used directly.
 	if path.IsAbs(name) {
-		return name, nil
+		args.Filename = name
+		return nil
 	}
 
 	// Paths with '/' in them should be joined to the working directory, or
 	// to the root if working directory is not set.
 	if strings.IndexByte(name, '/') > 0 {
+		wd := args.WorkingDirectory
 		if wd == "" {
 			wd = "/"
 		}
 		if !path.IsAbs(wd) {
-			return "", fmt.Errorf("working directory %q must be absolute", wd)
+			return fmt.Errorf("working directory %q must be absolute", wd)
 		}
-		return path.Join(wd, name), nil
+		args.Filename = path.Join(wd, name)
+		return nil
 	}
 
 	// Otherwise, We must lookup the name in the paths, starting from the
 	// calling context's root directory.
-	paths := getPath(envv)
+	paths := getPath(args.Envv)
+	if kernel.VFS2Enabled {
+		f, err := resolveVFS2(ctx, args.Credentials, args.MountNamespaceVFS2, paths, name)
+		if err != nil {
+			return fmt.Errorf("error finding executable %q in PATH %v: %v", name, args.Envv, err)
+		}
+		args.Filename = f
+	} else {
+		f, err := resolve(ctx, args.MountNamespace, paths, name)
+		if err != nil {
+			return fmt.Errorf("error finding executable %q in PATH %v: %v", name, args.Envv, err)
+		}
+		args.Filename = f
+	}
+	return nil
+}
 
+func resolve(ctx context.Context, mns *fs.MountNamespace, paths []string, name string) (string, error) {
 	root := fs.RootFromContext(ctx)
 	if root == nil {
 		// Caller has no root. Don't bother traversing anything.
@@ -95,30 +123,7 @@ func ResolveExecutablePath(ctx context.Context, creds *auth.Credentials, mns *fs
 	return "", syserror.ENOENT
 }
 
-// ResolveExecutablePathVFS2 resolves the given executable name given the
-// working dir and environment.
-func ResolveExecutablePathVFS2(ctx context.Context, creds *auth.Credentials, mns *vfs.MountNamespace, envv []string, wd, name string) (string, error) {
-	// Absolute paths can be used directly.
-	if path.IsAbs(name) {
-		return name, nil
-	}
-
-	// Paths with '/' in them should be joined to the working directory, or
-	// to the root if working directory is not set.
-	if strings.IndexByte(name, '/') > 0 {
-		if wd == "" {
-			wd = "/"
-		}
-		if !path.IsAbs(wd) {
-			return "", fmt.Errorf("working directory %q must be absolute", wd)
-		}
-		return path.Join(wd, name), nil
-	}
-
-	// Otherwise, We must lookup the name in the paths, starting from the
-	// calling context's root directory.
-	paths := getPath(envv)
-
+func resolveVFS2(ctx context.Context, creds *auth.Credentials, mns *vfs.MountNamespace, paths []string, name string) (string, error) {
 	root := mns.Root()
 	defer root.DecRef()
 	for _, p := range paths {

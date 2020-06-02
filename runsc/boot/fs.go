@@ -293,11 +293,9 @@ func setupContainerFS(ctx context.Context, conf *Config, mntr *containerMounter,
 	procArgs.MountNamespace = mns
 
 	// Resolve the executable path from working dir and environment.
-	f, err := user.ResolveExecutablePath(ctx, procArgs.Credentials, procArgs.MountNamespace, procArgs.Envv, procArgs.WorkingDirectory, procArgs.Argv[0])
-	if err != nil {
+	if err := user.ResolveExecutablePath(ctx, procArgs); err != nil {
 		return fmt.Errorf("searching for executable %q, cwd: %q, envv: %q: %v", procArgs.Argv[0], procArgs.WorkingDirectory, procArgs.Envv, err)
 	}
-	procArgs.Filename = f
 	return nil
 }
 
