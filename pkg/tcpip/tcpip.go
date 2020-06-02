@@ -83,6 +83,7 @@ var (
 	ErrAlreadyConnecting         = &Error{msg: "endpoint is already connecting", ignoreStats: true}
 	ErrAlreadyConnected          = &Error{msg: "endpoint is already connected", ignoreStats: true}
 	ErrNoPortAvailable           = &Error{msg: "no ports are available"}
+	ErrNoUDPPortAvailable        = &Error{msg: "try again"}
 	ErrPortInUse                 = &Error{msg: "port is in use"}
 	ErrBadLocalAddress           = &Error{msg: "bad local address"}
 	ErrClosedForSend             = &Error{msg: "endpoint is closed for send"}

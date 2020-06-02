@@ -2129,6 +2129,36 @@ TEST_P(IPv4UDPUnboundSocketTest, ReuseAddrReusePortDistribution) {
               SyscallSucceedsWithValue(kMessageSize));
 }
 
+// Check that connect returns EADDRNOTAVAIL when out of ephemeral ports.
+TEST_P(IPv4UDPUnboundSocketTest, UDPConnectPortExhaustion) {
+  auto receiver1 = ASSERT_NO_ERRNO_AND_VALUE(NewSocket());
+  constexpr int kClients = 65536;
+  // Bind the first socket to the loopback and take note of the selected port.
+  auto addr = V4Loopback();
+  ASSERT_THAT(bind(receiver1->get(), reinterpret_cast<sockaddr*>(&addr.addr),
+                   addr.addr_len),
+              SyscallSucceeds());
+  socklen_t addr_len = addr.addr_len;
+  ASSERT_THAT(getsockname(receiver1->get(),
+                          reinterpret_cast<sockaddr*>(&addr.addr), &addr_len),
+              SyscallSucceeds());
+  EXPECT_EQ(addr_len, addr.addr_len);
+
+  std::vector<std::unique_ptr<FileDescriptor>> sockets;
+  for (int i = 0; i < kClients; i++) {
+    auto s = ASSERT_NO_ERRNO_AND_VALUE(NewSocket());
+
+    int ret = connect(s->get(), reinterpret_cast<sockaddr*>(&addr.addr),
+                      addr.addr_len);
+    if (ret == 0) {
+      sockets.push_back(std::move(s));
+      continue;
+    }
+    ASSERT_THAT(ret, SyscallFailsWithErrno(EAGAIN));
+    break;
+  }
+}
+
 // Test that socket will receive packet info control message.
 TEST_P(IPv4UDPUnboundSocketTest, SetAndReceiveIPPKTINFO) {
   // TODO(gvisor.dev/issue/1202): ioctl() is not supported by hostinet.

@@ -1129,6 +1129,9 @@ func (e *endpoint) registerWithStack(nicID tcpip.NICID, netProtos []tcpip.Networ
 		}
 		port, err := e.stack.ReservePort(netProtos, ProtocolNumber, id.LocalAddress, id.LocalPort, flags, e.bindToDevice)
 		if err != nil {
+			if err == tcpip.ErrNoPortAvailable {
+				err = tcpip.ErrNoUDPPortAvailable
+			}
 			return id, e.bindToDevice, err
 		}
 		e.boundPortFlags = flags

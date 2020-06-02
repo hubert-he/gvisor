@@ -31,7 +31,8 @@ var (
 	ErrAlreadyBound          = New(tcpip.ErrAlreadyBound.String(), linux.EINVAL)
 	ErrInvalidEndpointState  = New(tcpip.ErrInvalidEndpointState.String(), linux.EINVAL)
 	ErrAlreadyConnecting     = New(tcpip.ErrAlreadyConnecting.String(), linux.EALREADY)
-	ErrNoPortAvailable       = New(tcpip.ErrNoPortAvailable.String(), linux.EAGAIN)
+	ErrNoPortAvailable       = New(tcpip.ErrNoPortAvailable.String(), linux.EADDRNOTAVAIL)
+	ErrNoUDPPortAvailable    = New(tcpip.ErrNoUDPPortAvailable.String(), linux.EAGAIN)
 	ErrPortInUse             = New(tcpip.ErrPortInUse.String(), linux.EADDRINUSE)
 	ErrBadLocalAddress       = New(tcpip.ErrBadLocalAddress.String(), linux.EADDRNOTAVAIL)
 	ErrClosedForSend         = New(tcpip.ErrClosedForSend.String(), linux.EPIPE)
@@ -62,6 +63,7 @@ var netstackErrorTranslations = map[*tcpip.Error]*Error{
 	tcpip.ErrAlreadyConnecting:         ErrAlreadyConnecting,
 	tcpip.ErrAlreadyConnected:          ErrAlreadyConnected,
 	tcpip.ErrNoPortAvailable:           ErrNoPortAvailable,
+	tcpip.ErrNoUDPPortAvailable:        ErrNoUDPPortAvailable,
 	tcpip.ErrPortInUse:                 ErrPortInUse,
 	tcpip.ErrBadLocalAddress:           ErrBadLocalAddress,
 	tcpip.ErrClosedForSend:             ErrClosedForSend,
