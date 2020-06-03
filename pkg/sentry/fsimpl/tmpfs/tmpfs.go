@@ -30,6 +30,7 @@ package tmpfs
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -112,6 +113,54 @@ func (fstype FilesystemType) GetFilesystem(ctx context.Context, vfsObj *vfs.Virt
 		}
 	}
 
+	mopts := vfs.GenericParseMountOptions(opts.Data)
+	rootMode := linux.FileMode(0777)
+	if rootFileType == linux.S_IFDIR {
+		rootMode = 01777
+	}
+	modeStr, ok := mopts["mode"]
+	if ok {
+		delete(mopts, "mode")
+		mode, err := strconv.ParseUint(modeStr, 8, 32)
+		if err != nil {
+			ctx.Warningf("tmpfs.FilesystemType.GetFilesystem: invalid mode: %q", modeStr)
+			return nil, nil, syserror.EINVAL
+		}
+		rootMode = linux.FileMode(mode & 07777)
+	}
+	rootKUID := creds.EffectiveKUID
+	uidStr, ok := mopts["uid"]
+	if ok {
+		delete(mopts, "uid")
+		uid, err := strconv.ParseUint(uidStr, 10, 32)
+		if err != nil {
+			ctx.Warningf("tmpfs.FilesystemType.GetFilesystem: invalid uid: %q", uidStr)
+			return nil, nil, syserror.EINVAL
+		}
+		kuid := creds.UserNamespace.MapToKUID(auth.UID(uid))
+		if !kuid.Ok() {
+			ctx.Warningf("tmpfs.FilesystemType.GetFilesystem: unmapped uid: %d", uid)
+			return nil, nil, syserror.EINVAL
+		}
+		rootKUID = kuid
+	}
+	rootKGID := creds.EffectiveKGID
+	gidStr, ok := mopts["gid"]
+	if ok {
+		delete(mopts, "gid")
+		gid, err := strconv.ParseUint(gidStr, 10, 32)
+		if err != nil {
+			ctx.Warningf("tmpfs.FilesystemType.GetFilesystem: invalid gid: %q", gidStr)
+			return nil, nil, syserror.EINVAL
+		}
+		kgid := creds.UserNamespace.MapToKGID(auth.GID(gid))
+		if !kgid.Ok() {
+			ctx.Warningf("tmpfs.FilesystemType.GetFilesystem: unmapped gid: %d", gid)
+			return nil, nil, syserror.EINVAL
+		}
+		rootKGID = kgid
+	}
+
 	devMinor, err := vfsObj.GetAnonBlockDevMinor()
 	if err != nil {
 		return nil, nil, err
@@ -127,11 +176,11 @@ func (fstype FilesystemType) GetFilesystem(ctx context.Context, vfsObj *vfs.Virt
 	var root *dentry
 	switch rootFileType {
 	case linux.S_IFREG:
-		root = fs.newDentry(fs.newRegularFile(creds, 0777))
+		root = fs.newDentry(fs.newRegularFile(rootKUID, rootKGID, rootMode))
 	case linux.S_IFLNK:
-		root = fs.newDentry(fs.newSymlink(creds, tmpfsOpts.RootSymlinkTarget))
+		root = fs.newDentry(fs.newSymlink(rootKUID, rootKGID, rootMode, tmpfsOpts.RootSymlinkTarget))
 	case linux.S_IFDIR:
-		root = &fs.newDirectory(creds, 01777).dentry
+		root = &fs.newDirectory(rootKUID, rootKGID, rootMode).dentry
 	default:
 		fs.vfsfs.DecRef()
 		return nil, nil, fmt.Errorf("invalid tmpfs root file type: %#o", rootFileType)
@@ -269,15 +318,15 @@ type inode struct {
 
 const maxLinks = math.MaxUint32
 
-func (i *inode) init(impl interface{}, fs *filesystem, creds *auth.Credentials, mode linux.FileMode) {
+func (i *inode) init(impl interface{}, fs *filesystem, kuid auth.KUID, kgid auth.KGID, mode linux.FileMode) {
 	if mode.FileType() == 0 {
 		panic("file type is required in FileMode")
 	}
 	i.fs = fs
 	i.refs = 1
 	i.mode = uint32(mode)
-	i.uid = uint32(creds.EffectiveKUID)
-	i.gid = uint32(creds.EffectiveKGID)
+	i.uid = uint32(kuid)
+	i.gid = uint32(kgid)
 	i.ino = atomic.AddUint64(&fs.nextInoMinusOne, 1)
 	// Tmpfs creation sets atime, ctime, and mtime to current time.
 	now := fs.clock.Now().Nanoseconds()
@@ -731,8 +780,7 @@ func NewMemfd(mount *vfs.Mount, creds *auth.Credentials, allowSeals bool, name s
 
 	// Per Linux, mm/shmem.c:__shmem_file_setup(), memfd inodes are set up with
 	// S_IRWXUGO.
-	mode := linux.FileMode(0777)
-	inode := fs.newRegularFile(creds, mode)
+	inode := fs.newRegularFile(creds.EffectiveKUID, creds.EffectiveKGID, 0777)
 	rf := inode.impl.(*regularFile)
 	if allowSeals {
 		rf.seals = 0
